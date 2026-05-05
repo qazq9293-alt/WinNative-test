@@ -392,6 +392,7 @@ interface GameSettingsCallbacks {
     fun onOpenArtworkSource() {}
     fun onRemoveEnvVar(index: Int)
     fun onUpdateWinComponent(isDirectX: Boolean, index: Int, newValue: Int)
+    fun onMidiSoundFontSelected(index: Int) {}
     fun onSelectExe() {}
     fun onGfxDriverVersionChanged(versionIndex: Int) {}
     fun onDxvkVersionChanged(versionIndex: Int) {}
@@ -1091,7 +1092,7 @@ private fun GeneralSection(
             label = stringResource(R.string.settings_audio_midi_sound_font),
             entries = state.midiSoundFontEntries.value,
             selectedIndex = state.selectedMidiSoundFont.intValue,
-            onSelected = { state.selectedMidiSoundFont.intValue = it }
+            onSelected = { callbacks.onMidiSoundFontSelected(it) }
         )
     }
 

@@ -48,6 +48,7 @@ import com.winlator.cmod.runtime.container.ContainerManager
 import com.winlator.cmod.runtime.container.Shortcut
 import com.winlator.cmod.runtime.content.ContentProfile
 import com.winlator.cmod.runtime.content.ContentsManager
+import com.winlator.cmod.runtime.display.environment.ImageFs
 import com.winlator.cmod.shared.android.AppUtils
 import com.winlator.cmod.shared.android.DirectoryPickerDialog
 import com.winlator.cmod.shared.android.ImageUtils
@@ -133,6 +134,18 @@ class ShortcutSettingsComposeDialog private constructor(
         ) { uri: Uri? ->
             if (uri == null) return@register
             saveSelectedArtwork(uri)
+        }
+
+    private var pendingWinComponentIndex: Int = -1
+    private var pendingWinComponentIsDirectX: Boolean = false
+
+    private val dllImportLauncher: ActivityResultLauncher<String>? =
+        (activity as? ComponentActivity)?.activityResultRegistry?.register(
+            "shortcut_dll_import",
+            ActivityResultContracts.GetContent()
+        ) { uri: Uri? ->
+            if (uri == null) return@register
+            importDllForWinComponent(uri, pendingWinComponentIsDirectX, pendingWinComponentIndex)
         }
 
     init {
@@ -318,6 +331,33 @@ class ShortcutSettingsComposeDialog private constructor(
             }
 
             override fun onUpdateWinComponent(isDirectX: Boolean, index: Int, newValue: Int) {
+                if (newValue == 2) {
+                    // Import Custom
+                    DirectoryPickerDialog.showFile(
+                        activity = activity,
+                        title = "Select DLL to import",
+                        allowedExtensions = setOf("dll"),
+                        dimAmount = 0.5f,
+                        preserveBackdropBlur = true,
+                    ) { path ->
+                        importDllForWinComponent(path, isDirectX, index)
+                        // After import, set to Native
+                        if (isDirectX) {
+                            val components = state.directXComponents.value.toMutableList()
+                            if (index in components.indices) {
+                                components[index] = components[index].copy(selectedIndex = 1)
+                                state.directXComponents.value = components
+                            }
+                        } else {
+                            val components = state.generalComponents.value.toMutableList()
+                            if (index in components.indices) {
+                                components[index] = components[index].copy(selectedIndex = 1)
+                                state.generalComponents.value = components
+                            }
+                        }
+                    }
+                    return
+                }
                 if (isDirectX) {
                     val components = state.directXComponents.value.toMutableList()
                     if (index in components.indices) {
@@ -330,6 +370,30 @@ class ShortcutSettingsComposeDialog private constructor(
                         components[index] = components[index].copy(selectedIndex = newValue)
                         state.generalComponents.value = components
                     }
+                }
+            }
+
+            override fun onMidiSoundFontSelected(index: Int) {
+                val entries = state.midiSoundFontEntries.value
+                if (index == entries.size - 1) { // Import...
+                    DirectoryPickerDialog.showFile(
+                        activity = activity,
+                        title = "Select Sound Font to import",
+                        allowedExtensions = setOf("sf2"),
+                        dimAmount = 0.5f,
+                        preserveBackdropBlur = true,
+                    ) { path ->
+                        importSoundFont(path)
+                        loadMidiSoundFonts() // Reload list
+                        // Set to the newly imported one
+                        val newEntries = state.midiSoundFontEntries.value
+                        val newIndex = newEntries.indexOfFirst { it == File(path).nameWithoutExtension }
+                        if (newIndex >= 0) {
+                            state.selectedMidiSoundFont.intValue = newIndex
+                        }
+                    }
+                } else {
+                    state.selectedMidiSoundFont.intValue = index
                 }
             }
         }
@@ -659,6 +723,7 @@ class ShortcutSettingsComposeDialog private constructor(
                 filesName.add(adapter.getItem(i).toString())
             }
         }
+        filesName.add("Import...")
 
         state.midiSoundFontEntries.value = filesName
         val savedFont = getShortcutSetting("midiSoundFont", shortcut.container.getMIDISoundFont())
@@ -2247,6 +2312,55 @@ class ShortcutSettingsComposeDialog private constructor(
         return "csmt=$csmt,gpuName=$gpuName,videoMemorySize=$videoMemorySize," +
                 "strict_shader_math=$strictShaderMath,OffscreenRenderingMode=$offscreenRenderingMode," +
                 "renderer=$renderer"
+    }
+
+
+    private fun importDllForWinComponent(path: String, isDirectX: Boolean, index: Int) {
+        val component = if (isDirectX) {
+            state.directXComponents.value.getOrNull(index)
+        } else {
+            state.generalComponents.value.getOrNull(index)
+        }
+        if (component == null) return
+
+        val key = component.key
+        val dllFile = File(path)
+        if (!dllFile.exists()) return
+
+        // Copy to container's system32
+        val container = shortcut.container
+        val imageFs = ImageFs(context, container)
+        val system32Dir = File(imageFs.getWinePath() + "/drive_c/windows/system32")
+        system32Dir.mkdirs()
+        val destFile = File(system32Dir, dllFile.name)
+        try {
+            dllFile.inputStream().use { input ->
+                destFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            AppUtils.showToast(context, "DLL imported: ${dllFile.name}")
+        } catch (e: Exception) {
+            AppUtils.showToast(context, "Failed to import DLL: ${e.message}")
+        }
+    }
+
+    private fun importSoundFont(path: String) {
+        val uri = Uri.fromFile(File(path))
+        MidiManager.installSF2File(context, uri, object : MidiManager.OnSoundFontInstalledCallback {
+            override fun onSuccess() {
+                AppUtils.showToast(context, "Sound font imported")
+            }
+
+            override fun onFailed(reason: Int) {
+                val message = when (reason) {
+                    MidiManager.ERROR_EXIST -> "Sound font already exists"
+                    MidiManager.ERROR_BADFORMAT -> "Invalid sound font format"
+                    else -> "Failed to import sound font"
+                }
+                AppUtils.showToast(context, message)
+            }
+        })
     }
 
 

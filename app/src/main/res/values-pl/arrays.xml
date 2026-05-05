@@ -97,6 +97,7 @@
     <string-array name="wincomponent_entries">
         <item>Wbudowany (Wine)</item>
         <item>Natywny (Windows)</item>
+        <item>Importuj własny</item>
     </string-array>
     <string-array name="box64_version_entries">
     </string-array>

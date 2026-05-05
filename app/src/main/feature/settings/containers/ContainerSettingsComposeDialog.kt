@@ -35,6 +35,8 @@ import com.winlator.cmod.runtime.container.Container
 import com.winlator.cmod.runtime.container.ContainerManager
 import com.winlator.cmod.runtime.content.ContentProfile
 import com.winlator.cmod.runtime.content.ContentsManager
+import com.winlator.cmod.runtime.display.environment.ImageFs
+import com.winlator.cmod.runtime.audio.midi.MidiManager
 import com.winlator.cmod.feature.settings.DXVKConfigUtils
 import com.winlator.cmod.feature.settings.GraphicsDriverConfigUtils
 import com.winlator.cmod.feature.settings.WineD3DConfigUtils
@@ -206,6 +208,33 @@ class ContainerSettingsComposeDialog @JvmOverloads constructor(
             }
 
             override fun onUpdateWinComponent(isDirectX: Boolean, index: Int, newValue: Int) {
+                if (newValue == 2) {
+                    // Import Custom
+                    DirectoryPickerDialog.showFile(
+                        activity = activity,
+                        title = "Select DLL to import",
+                        allowedExtensions = setOf("dll"),
+                        dimAmount = 0.5f,
+                        preserveBackdropBlur = true,
+                    ) { path ->
+                        importDllForWinComponent(path, isDirectX, index)
+                        // After import, set to Native
+                        if (isDirectX) {
+                            val components = state.directXComponents.value.toMutableList()
+                            if (index in components.indices) {
+                                components[index] = components[index].copy(selectedIndex = 1)
+                                state.directXComponents.value = components
+                            }
+                        } else {
+                            val components = state.generalComponents.value.toMutableList()
+                            if (index in components.indices) {
+                                components[index] = components[index].copy(selectedIndex = 1)
+                                state.generalComponents.value = components
+                            }
+                        }
+                    }
+                    return
+                }
                 if (isDirectX) {
                     val components = state.directXComponents.value.toMutableList()
                     if (index in components.indices) {
@@ -218,6 +247,30 @@ class ContainerSettingsComposeDialog @JvmOverloads constructor(
                         components[index] = components[index].copy(selectedIndex = newValue)
                         state.generalComponents.value = components
                     }
+                }
+            }
+
+            override fun onMidiSoundFontSelected(index: Int) {
+                val entries = state.midiSoundFontEntries.value
+                if (index == entries.size - 1) { // Import...
+                    DirectoryPickerDialog.showFile(
+                        activity = activity,
+                        title = "Select Sound Font to import",
+                        allowedExtensions = setOf("sf2"),
+                        dimAmount = 0.5f,
+                        preserveBackdropBlur = true,
+                    ) { path ->
+                        importSoundFont(path)
+                        loadMidiSoundFonts() // Reload list
+                        // Set to the newly imported one
+                        val newEntries = state.midiSoundFontEntries.value
+                        val newIndex = newEntries.indexOfFirst { it == File(path).nameWithoutExtension }
+                        if (newIndex >= 0) {
+                            state.selectedMidiSoundFont.intValue = newIndex
+                        }
+                    }
+                } else {
+                    state.selectedMidiSoundFont.intValue = index
                 }
             }
 
@@ -657,6 +710,34 @@ class ContainerSettingsComposeDialog @JvmOverloads constructor(
         loadDxvkConfigState()
         loadWineD3DConfigState()
         updateEmulatorFrameVisibility()
+    }
+
+    private fun importDllForWinComponent(path: String, isDirectX: Boolean, index: Int) {
+        val component = if (isDirectX) {
+            state.directXComponents.value.getOrNull(index)
+        } else {
+            state.generalComponents.value.getOrNull(index)
+        }
+        if (component == null) return
+
+        val dllFile = File(path)
+        if (!dllFile.exists()) return
+
+        // Copy to container's system32
+        val imageFs = ImageFs(context, container)
+        val system32Dir = File(imageFs.getWinePath() + "/drive_c/windows/system32")
+        system32Dir.mkdirs()
+        val destFile = File(system32Dir, dllFile.name)
+        try {
+            dllFile.inputStream().use { input ->
+                destFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            AppUtils.showToast(context, "DLL imported: ${dllFile.name}")
+        } catch (e: Exception) {
+            AppUtils.showToast(context, "Failed to import DLL: ${e.message}")
+        }
     }
 
     private fun saveSettings() {
@@ -1493,6 +1574,24 @@ class ContainerSettingsComposeDialog @JvmOverloads constructor(
         // the Dialog.OnDismissListener so back-button dismissal takes the
         // same path as Save/Cancel.
         dialog.dismiss()
+    }
+
+    private fun importSoundFont(path: String) {
+        val uri = Uri.fromFile(File(path))
+        MidiManager.installSF2File(context, uri, object : MidiManager.OnSoundFontInstalledCallback {
+            override fun onSuccess() {
+                AppUtils.showToast(context, "Sound font imported")
+            }
+
+            override fun onFailed(reason: Int) {
+                val message = when (reason) {
+                    MidiManager.ERROR_EXIST -> "Sound font already exists"
+                    MidiManager.ERROR_BADFORMAT -> "Invalid sound font format"
+                    else -> "Failed to import sound font"
+                }
+                AppUtils.showToast(context, message)
+            }
+        })
     }
 
     companion object {
